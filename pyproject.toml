@@ -1,0 +1,25 @@
+[build-system]
+requires      = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name        = "bwt-wrapper"
+version     = "0.1.0"
+description = "A package to take the pain out when working with the Bing Webmaster Tools API."
+readme      = "README.md"
+license     = { text = "GPL-3.0-only" }
+requires-python = ">=3.13"
+
+dependencies = [
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+dataframe = ["pandas>=1.5"]
+
+[project.urls]
+Repository = "https://github.com/andreamoro/BWT-Wrapper"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bwt_wrapper*"]

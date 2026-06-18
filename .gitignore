@@ -1,0 +1,11 @@
+# Credentials – never commit real API keys
+credentials.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+tests/*.toml
+tests/*.pck
