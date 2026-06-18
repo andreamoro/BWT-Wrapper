@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name        = "bwt-wrapper"
-version     = "0.1.0"
+version     = "0.1.1"
 description = "A package to take the pain out when working with the Bing Webmaster Tools API."
 readme      = "README.md"
 license     = { text = "GPL-3.0-only" }
@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dataframe = ["pandas>=1.5"]
+test      = ["pytest>=7.0", "pandas>=1.5"]
 
 [project.urls]
 Repository = "https://github.com/andreamoro/BWT-Wrapper"
@@ -23,3 +24,10 @@ Repository = "https://github.com/andreamoro/BWT-Wrapper"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["bwt_wrapper*"]
+
+[tool.pytest.ini_options]
+# Only collect the curated suite under tests/; never descend into virtualenvs
+# or build artefacts (the tests/ tree contains a .venv and pickle fixtures).
+testpaths     = ["tests"]
+norecursedirs = [".venv", "*.egg-info", "__pycache__", "build", "dist"]
+addopts       = "-ra -q"

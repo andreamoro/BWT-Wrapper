@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.1] – 2026-06-18
+
+### Fixed
+- Replaced deprecated `datetime.utcnow()` (in `query._today`) and
+  `datetime.utcfromtimestamp()` (in `api._parse_bing_date`) with
+  timezone-aware UTC equivalents; both were scheduled for removal in a future
+  Python and emitted `DeprecationWarning` on the required Python 3.13 runtime
+
+### Added
+- Offline, deterministic `pytest` suite covering every module (credentials,
+  transport, account, query/page stats, keywords, blocked URLs, report,
+  enumerations); the HTTP layer is mocked via test doubles so no API key or
+  network is needed
+- `[test]` optional-dependency group and `[tool.pytest.ini_options]`
+  configuration in `pyproject.toml`
+
+### Changed
+- Renamed the live, network-dependent script `tests/test.py` →
+  `tests/live_check.py` so it is excluded from the automated suite
+
 ## [0.1.0] – 2026-03-02
 
 ### Added

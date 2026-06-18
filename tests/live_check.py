@@ -1,5 +1,16 @@
 """
-Test suite for Bing Webmaster Tools Wrapper.
+Live, manual smoke-check for the Bing Webmaster Tools Wrapper.
+
+This script talks to the REAL Bing API and therefore needs a valid
+``credentials.toml`` and network access. It is intentionally NOT a pytest
+module (its filename does not match ``test_*.py``) so the automated suite
+under ``tests/test_*.py`` stays fully offline and deterministic.
+
+Run it manually against a live account with::
+
+    python tests/live_check.py
+
+For the automated, offline suite run ``pytest`` from the project root.
 
 Adapted from the Google Search Console Wrapper test suite.
 """

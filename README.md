@@ -265,6 +265,40 @@ Key design decisions worth remembering:
 
 ---
 
+## Testing
+
+The automated suite under [`tests/`](tests/) is **fully offline and
+deterministic** — the HTTP layer is replaced with test doubles, so no API key
+or network connection is required. Run it after every change:
+
+```bash
+python -m pip install ".[test]"   # installs pytest (and pandas)
+pytest
+```
+
+What is covered:
+
+| Test module                   | What it verifies                                                        |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `test_credentials.py`       | TOML key loading and every failure mode (missing file/field, empty key) |
+| `test_api.py`               | URL building, `/Date(...)/` parsing, GET/POST plumbing, error handling  |
+| `test_account.py`           | Site discovery, caching, int/URL indexing, lookup tolerance             |
+| `test_query_page_stats.py`  | Immutable fluent builders, client-side filtering, position normalisation, date validation |
+| `test_keywords.py`          | Required-field validation and enum/raw-string coercion                  |
+| `test_blocked.py`           | URL validation and enum→int coercion for add/remove                     |
+| `test_report.py`            | DataFrame / pickle / byte-stream round-trips                            |
+| `test_enumerations.py`      | Enum values and a regression guard against duplicate definitions        |
+
+The fakes live in [`tests/conftest.py`](tests/conftest.py): `FakeSession`
+exercises the transport layer; `FakeApi` lets the higher-level classes be
+tested in isolation.
+
+> [`tests/live_check.py`](tests/live_check.py) is a separate **manual** smoke
+> test that hits the real Bing API (needs `credentials.toml`). It is excluded
+> from the pytest run on purpose.
+
+---
+
 ## Key differences from GSC Wrapper
 
 | Feature                    | GSC Wrapper                     | BWT Wrapper                           |
