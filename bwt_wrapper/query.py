@@ -28,7 +28,8 @@ _MIN_DATE = datetime.date(2000, 1, 1)
 
 
 def _today() -> datetime.date:
-    return datetime.datetime.utcnow().date()
+    # Timezone-aware UTC "today" (utcnow() is deprecated for removal).
+    return datetime.datetime.now(datetime.UTC).date()
 
 
 class _BaseStats:

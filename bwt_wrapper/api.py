@@ -35,7 +35,9 @@ def _parse_bing_date(value: str) -> datetime.date | None:
     if not m:
         return None
     ms = int(m.group(1))
-    return datetime.datetime.utcfromtimestamp(ms / 1000).date()
+    # Bing timestamps are UTC milliseconds; build a timezone-aware UTC
+    # datetime (utcfromtimestamp() is deprecated for removal) and take the date.
+    return datetime.datetime.fromtimestamp(ms / 1000, datetime.UTC).date()
 
 
 def _normalise_row(row: dict) -> dict:
