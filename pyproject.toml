@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name        = "bwt-wrapper"
-version     = "0.1.1"
+version     = "0.2.0"
 description = "A package to take the pain out when working with the Bing Webmaster Tools API."
 readme      = "README.md"
 license     = { text = "GPL-3.0-only" }

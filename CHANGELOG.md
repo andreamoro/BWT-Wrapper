@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0] – 2026-06-19
+
+### Added
+- `Ctr` (click-through rate) field on `QueryStats` / `PageStats` rows,
+  computed by the wrapper as `Clicks / Impressions` (a 0–1 ratio rounded to
+  4 decimals; `0.0` when there are no impressions). Bing's API does not
+  return CTR, so this saves callers from deriving it
+- README installation instructions for `uv` (alongside the existing `pip`
+  path) and a "Related projects" link to the GSC Wrapper
+
+### Changed
+- Rewrote the "Key differences from GSC Wrapper" comparison, splitting it by
+  scope — own search-performance data vs. keyword research vs. account
+  management — to remove the ambiguity around country filtering and keyword
+  research (search performance is site-scoped; `GetKeywordStats` reports
+  market-level demand for arbitrary terms and is not tied to a property)
+
 ## [0.1.1] – 2026-06-18
 
 ### Fixed
