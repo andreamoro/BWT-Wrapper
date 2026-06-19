@@ -166,6 +166,23 @@ class _BaseStats:
                 row[field] = row[field] / 10
         return row
 
+    @staticmethod
+    def _add_ctr(row: dict) -> dict:
+        """
+        Add a computed click-through-rate ('Ctr') field.
+
+        Bing returns Clicks and Impressions but, unlike Google Search Console,
+        no CTR. Computing it here saves every caller from deriving it. The
+        value is a 0–1 ratio (e.g. 0.125 == 12.5%) rounded to 4 decimals; rows
+        with zero impressions get a CTR of 0.0 to avoid division by zero. Rows
+        missing either field are left untouched.
+        """
+        clicks = row.get('Clicks')
+        impressions = row.get('Impressions')
+        if isinstance(clicks, (int, float)) and isinstance(impressions, (int, float)):
+            row['Ctr'] = round(clicks / impressions, 4) if impressions else 0.0
+        return row
+
 
 class QueryStats(_BaseStats):
     """
@@ -175,7 +192,8 @@ class QueryStats(_BaseStats):
 
     Each row in the result represents one (query, week) combination and
     contains: Query, Date, Clicks, Impressions, AvgClickPosition,
-    AvgImpressionPosition.
+    AvgImpressionPosition, and Ctr (click-through rate, computed by this
+    wrapper as Clicks / Impressions).
 
     Usage
     -----
@@ -186,7 +204,7 @@ class QueryStats(_BaseStats):
 
     def _fetch(self) -> list[dict]:
         rows = self._property._api.get_query_stats(self._property.url)
-        return [self._normalise_positions(row) for row in rows]
+        return [self._add_ctr(self._normalise_positions(row)) for row in rows]
 
 
 class PageStats(_BaseStats):
@@ -207,7 +225,7 @@ class PageStats(_BaseStats):
 
     def _fetch(self) -> list[dict]:
         rows = self._property._api.get_page_stats(self._property.url)
-        return [self._normalise_positions(row) for row in rows]
+        return [self._add_ctr(self._normalise_positions(row)) for row in rows]
 
 
 # ------------------------------------------------------------------

@@ -53,6 +53,34 @@ def test_positions_are_divided_by_ten(site, fake_api, query_rows):
     assert rows[0]["AvgImpressionPosition"] == 5.0
 
 
+def test_ctr_is_computed_and_rounded(site, fake_api, query_rows):
+    fake_api.query_rows = query_rows
+    rows = QueryStats(site).get().rows
+    assert rows[0]["Ctr"] == 0.1       # 10 / 100
+    assert rows[1]["Ctr"] == 0.0625    # 5 / 80
+    assert rows[2]["Ctr"] == 0.1111    # 1 / 9, rounded to 4 decimals
+
+
+def test_ctr_is_zero_when_no_impressions(site, fake_api):
+    fake_api.query_rows = [
+        {"Query": "x", "Date": datetime.date(2025, 1, 1), "Clicks": 0, "Impressions": 0}
+    ]
+    assert QueryStats(site).get().rows[0]["Ctr"] == 0.0
+
+
+def test_ctr_skipped_when_fields_missing(site, fake_api):
+    fake_api.query_rows = [{"Query": "x", "Date": datetime.date(2025, 1, 1)}]
+    assert "Ctr" not in QueryStats(site).get().rows[0]
+
+
+def test_pagestats_also_gets_ctr(site, fake_api):
+    fake_api.page_rows = [
+        {"Query": "https://example.com/p", "Date": datetime.date(2025, 1, 1),
+         "Clicks": 2, "Impressions": 4}
+    ]
+    assert PageStats(site).get().rows[0]["Ctr"] == 0.5
+
+
 def test_date_range_filters_inclusive(site, fake_api, query_rows):
     fake_api.query_rows = query_rows
     report = QueryStats(site).date_range("2025-01-01", "2025-06-30").get()
