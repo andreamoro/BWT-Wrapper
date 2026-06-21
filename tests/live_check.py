@@ -15,6 +15,7 @@ For the automated, offline suite run ``pytest`` from the project root.
 Adapted from the Google Search Console Wrapper test suite.
 """
 
+import asyncio
 from datetime import date
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from bwt_wrapper import QueryStats, PageStats
 from bwt_wrapper.report import Report
 
 
-def Authenticate(istest: bool) -> tuple[bwt_wrapper.Account, bwt_wrapper.WebProperty]:
+async def Authenticate(istest: bool) -> tuple[bwt_wrapper.Account, bwt_wrapper.WebProperty]:
     """
     Authenticate and return an Account and WebProperty tuple.
 
@@ -41,6 +42,7 @@ def Authenticate(istest: bool) -> tuple[bwt_wrapper.Account, bwt_wrapper.WebProp
     if not istest:
         # Production mode: load API key from credentials.toml
         account = bwt_wrapper.Account()
+        await account.webproperties()  # populate the cache so indexing works
         site = account[0]  # Get the first site
     else:
         # Test mode: create account with fake API key and mock site
@@ -55,7 +57,7 @@ def Authenticate(istest: bool) -> tuple[bwt_wrapper.Account, bwt_wrapper.WebProp
     return account, site
 
 
-def test_search_analytics(query: QueryStats):
+async def test_search_analytics(query: QueryStats):
     """
     Test QueryStats functionality with date range filtering.
 
@@ -64,7 +66,7 @@ def test_search_analytics(query: QueryStats):
     """
     # First, fetch ALL data without date filtering to see what's available
     print("Fetching all data without date filter...")
-    report_all = query.get()
+    report_all = await query.get()
     print(f"All data report: {report_all}")
     print(f"Total rows: {len(report_all)}")
 
@@ -77,24 +79,24 @@ def test_search_analytics(query: QueryStats):
             print(f"Date range in data: {min(dates)} to {max(dates)}")
 
     # Test date range filtering with string dates
-    report = query.date_range('2025-01-10', '2025-11-30').get()
+    report = await query.date_range('2025-01-10', '2025-11-30').get()
     print(f"\nReport (2025-11-10 to 2025-11-30): {report}")
     print(f"Number of rows: {len(report)}")
 
     # Test date range filtering with date objects
-    report = query.date_range(date(2025, 1, 10), date(2025, 11, 30)).get()
+    report = await query.date_range(date(2025, 1, 10), date(2025, 11, 30)).get()
     print(f"Report with date objects: {report}")
 
     # Test query filter (substring match on query field)
-    report_filtered = query.filter_query('test').date_range('2025-01-10', '2025-11-30').get()
+    report_filtered = await query.filter_query('test').date_range('2025-01-10', '2025-11-30').get()
     print(f"Filtered report: {report_filtered}")
 
     # Test exact match filter
-    report_exact = query.filter_query('exact query', contains=False).date_range('2025-01-10', '2025-11-30').get()
+    report_exact = await query.filter_query('exact query', contains=False).date_range('2025-01-10', '2025-11-30').get()
     print(f"Exact match filtered report: {report_exact}")
 
     # Test execute() method (returns raw data without additional filters)
-    report_raw = query.date_range('2025-01-10', '2025-11-30').execute()
+    report_raw = await query.date_range('2025-01-10', '2025-11-30').execute()
     print(f"Raw report: {report_raw}")
 
     # Test to_dataframe if pandas is available
@@ -114,7 +116,7 @@ def test_search_analytics(query: QueryStats):
     assert len(report) == len(restored_report), "Report row count mismatch after persistence"
 
 
-def test_page_stats(site):
+async def test_page_stats(site):
     """
     Test PageStats functionality.
 
@@ -123,25 +125,25 @@ def test_page_stats(site):
     pages = PageStats(site)
 
     # Test date range filtering
-    report = pages.date_range('2025-01-10', '2025-11-30').get()
+    report = await pages.date_range('2025-01-10', '2025-11-30').get()
     print(f"PageStats report: {report}")
     print(f"Number of rows: {len(report)}")
 
     # Test filter by page URL (substring match)
-    report_filtered = pages.filter_query('/blog/').date_range('2025-01-10', '2025-11-30').get()
+    report_filtered = await pages.filter_query('/blog/').date_range('2025-01-10', '2025-11-30').get()
     print(f"Filtered PageStats report: {report_filtered}")
 
     # Test exact match filter
-    report_exact = pages.filter_query('https://www.test1.com/', contains=False).date_range('2025-01-10', '2025-11-30').get()
+    report_exact = await pages.filter_query('https://www.test1.com/', contains=False).date_range('2025-01-10', '2025-11-30').get()
     print(f"Exact match PageStats report: {report_exact}")
 
 
-def test_report_persistence(site):
+async def test_report_persistence(site):
     """
     Test Report persistence to disk and restoration.
     """
     query = QueryStats(site)
-    report = query.date_range('2025-01-10', '2025-11-21').get()
+    report = await query.date_range('2025-01-10', '2025-11-21').get()
 
     # Save to disk
     filename = report.to_disk()
@@ -161,22 +163,28 @@ def test_report_persistence(site):
     assert len(report) == len(restored_report), "Report row count mismatch after datastream"
 
 
-if __name__ == "__main__":
+async def main():
     # Authenticate (set istest=True to use fake credentials)
-    account, site = Authenticate(istest=False)
+    account, site = await Authenticate(istest=False)
     print(f"Testing with site: {site}")
 
-    # Test QueryStats
-    print("\n=== Testing QueryStats ===")
-    query = QueryStats(site)
-    test_search_analytics(query)
+    # Close the underlying HTTP client cleanly when finished.
+    async with account:
+        # Test QueryStats
+        print("\n=== Testing QueryStats ===")
+        query = QueryStats(site)
+        await test_search_analytics(query)
 
-    # Test PageStats
-    print("\n=== Testing PageStats ===")
-    test_page_stats(site)
+        # Test PageStats
+        print("\n=== Testing PageStats ===")
+        await test_page_stats(site)
 
-    # Test Report persistence
-    print("\n=== Testing Report Persistence ===")
-    test_report_persistence(site)
+        # Test Report persistence
+        print("\n=== Testing Report Persistence ===")
+        await test_report_persistence(site)
 
     print("\n=== All tests completed ===")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

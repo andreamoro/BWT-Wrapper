@@ -16,7 +16,7 @@ Bing API for this particular call.
 Usage
 -----
 keyword_query = bwt_wrapper.KeywordStats(site)
-report = (
+report = await (
     keyword_query
     .keyword('seo tools')
     .country(bwt_wrapper.country.UNITED_STATES)
@@ -28,8 +28,10 @@ df = report.to_dataframe()
 
 from __future__ import annotations
 import copy
+from typing import cast
 from .account import WebProperty
 from .report import Report
+from .schemas import KeywordRow
 from .enumerations import country as CountryEnum, language as LanguageEnum
 
 
@@ -103,32 +105,36 @@ class KeywordStats:
     # Execution
     # ------------------------------------------------------------------
 
-    def execute(self) -> Report:
+    async def execute(self) -> Report[KeywordRow]:
         """
         Fetch data from the API and return a Report.
         Requires keyword(), country(), and language() to have been set.
         """
-        self._validate()
-        rows = self._property._api.get_keyword_stats(
-            keyword=self._keyword,
-            country_code=self._country,
-            language_tag=self._language,
+        keyword, country, language = self._validate()
+        rows = await self._property._api.get_keyword_stats(
+            keyword=keyword,
+            country_code=country,
+            language_tag=language,
         )
-        return Report(rows)
+        return Report(cast("list[KeywordRow]", rows))
 
-    def get(self) -> Report:
+    async def get(self) -> Report[KeywordRow]:
         """Primary method for retrieving keyword stats. Delegates to execute()."""
-        return self.execute()
+        return await self.execute()
 
-    def to_dataframe(self):
-        """Shorthand for get().to_dataframe()."""
-        return self.get().to_dataframe()
+    async def to_dataframe(self):
+        """Shorthand for (await get()).to_dataframe()."""
+        return (await self.get()).to_dataframe()
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _validate(self) -> None:
+    def _validate(self) -> tuple[str, str, str]:
+        """
+        Ensure all required fields are set, returning them as a tuple of
+        non-None strings so callers (and the type checker) can rely on them.
+        """
         missing = []
         if not self._keyword:
             missing.append('keyword()')
@@ -140,6 +146,11 @@ class KeywordStats:
             raise ValueError(
                 f"The following must be set before calling get(): {', '.join(missing)}"
             )
+        # The checks above guarantee these are set; assert narrows the types.
+        assert self._keyword is not None
+        assert self._country is not None
+        assert self._language is not None
+        return self._keyword, self._country, self._language
 
     def __repr__(self) -> str:
         return (

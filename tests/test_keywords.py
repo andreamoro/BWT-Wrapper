@@ -22,9 +22,9 @@ def test_empty_keyword_raises(site):
         KeywordStats(site).keyword("   ")
 
 
-def test_get_without_required_fields_lists_what_is_missing(site):
+async def test_get_without_required_fields_lists_what_is_missing(site):
     with pytest.raises(ValueError) as exc:
-        KeywordStats(site).get()
+        await KeywordStats(site).get()
     msg = str(exc.value)
     assert "keyword()" in msg
     assert "country()" in msg
@@ -38,9 +38,9 @@ def test_fluent_chain_is_immutable(site):
     assert chained._keyword == "seo"
 
 
-def test_enum_country_and_language_are_coerced(site, fake_api):
+async def test_enum_country_and_language_are_coerced(site, fake_api):
     fake_api.keyword_rows = [{"Query": "seo", "Impressions": 1, "BroadImpressions": 2}]
-    report = (
+    report = await (
         KeywordStats(site)
         .keyword("seo tools")
         .country(country.UNITED_STATES)
@@ -55,13 +55,13 @@ def test_enum_country_and_language_are_coerced(site, fake_api):
     }
 
 
-def test_raw_string_country_is_lowercased(site, fake_api):
-    KeywordStats(site).keyword("x").country("US").language("en").get()
+async def test_raw_string_country_is_lowercased(site, fake_api):
+    await KeywordStats(site).keyword("x").country("US").language("en").get()
     assert fake_api.keyword_args["country_code"] == "us"
 
 
-def test_keyword_is_stripped(site, fake_api):
-    KeywordStats(site).keyword("  spaced  ").country("us").language("en").get()
+async def test_keyword_is_stripped(site, fake_api):
+    await KeywordStats(site).keyword("  spaced  ").country("us").language("en").get()
     assert fake_api.keyword_args["keyword"] == "spaced"
 
 

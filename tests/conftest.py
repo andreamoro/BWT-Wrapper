@@ -4,13 +4,13 @@ Shared pytest fixtures and test doubles for the BWT Wrapper suite.
 The whole suite is offline and deterministic: nothing here ever touches the
 network. Two layers of fakes are provided:
 
-* ``FakeSession`` / ``FakeResponse`` — drop-in replacements for the
-  ``requests`` session used by ``BingApi``. These exercise the low-level
+* ``FakeClient`` / ``FakeResponse`` — drop-in replacements for the
+  ``httpx.AsyncClient`` used by ``BingApi``. These exercise the low-level
   HTTP transport (URL building, JSON/date parsing, error handling) without a
-  real socket.
+  real socket. ``FakeClient.get``/``post`` are coroutines, matching httpx.
 * ``FakeApi`` — a stand-in for ``BingApi`` used by the higher-level classes
   (Account, QueryStats, BlockedUrls, …) so their logic can be tested in
-  isolation from the transport layer.
+  isolation from the transport layer. Its endpoint methods are coroutines.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from bwt_wrapper.api import BingApi  # noqa: E402
 # ----------------------------------------------------------------------
 
 class FakeResponse:
-    """Minimal stand-in for ``requests.Response``."""
+    """Minimal stand-in for ``httpx.Response``."""
 
     def __init__(self, status_code=200, json_data=None, text="", raise_json=False):
         self.status_code = status_code
@@ -50,11 +50,12 @@ class FakeResponse:
         return self._json_data
 
 
-class FakeSession:
+class FakeClient:
     """
-    Records every request and returns pre-seeded responses.
+    Async stand-in for ``httpx.AsyncClient``.
 
-    Set ``get_response`` / ``post_response`` to control what the next call
+    Records every request and returns pre-seeded responses. Set
+    ``get_response`` / ``post_response`` to control what the next call
     returns; inspect ``get_calls`` / ``post_calls`` to assert on what was sent.
     """
 
@@ -65,20 +66,23 @@ class FakeSession:
         self.get_response = FakeResponse(json_data={"d": []})
         self.post_response = FakeResponse(json_data={"d": True})
 
-    def get(self, url, timeout=None):
+    async def get(self, url, timeout=None):
         self.get_calls.append({"url": url, "timeout": timeout})
         return self.get_response
 
-    def post(self, url, json=None, timeout=None):
+    async def post(self, url, json=None, timeout=None):
         self.post_calls.append({"url": url, "json": json, "timeout": timeout})
         return self.post_response
+
+    async def aclose(self):
+        pass
 
 
 @pytest.fixture
 def api():
-    """A ``BingApi`` whose network session is replaced with a ``FakeSession``."""
+    """A ``BingApi`` whose network client is replaced with a ``FakeClient``."""
     instance = BingApi("test-api-key")
-    instance._session = FakeSession()
+    instance._client = FakeClient()
     return instance
 
 
@@ -100,6 +104,7 @@ class FakeApi:
         self.page_rows: list[dict] = []
         self.keyword_rows: list[dict] = []
         self.blocked_rows: list[dict] = []
+        self.crawl_rows: list[dict] = []
 
         # Call recorders for write/read assertions.
         self.get_sites_calls = 0
@@ -107,19 +112,19 @@ class FakeApi:
         self.added = []
         self.removed = []
 
-    def get_sites(self):
+    async def get_sites(self):
         self.get_sites_calls += 1
         return copy.deepcopy(self.sites)
 
-    def get_query_stats(self, site_url):
+    async def get_query_stats(self, site_url):
         self.query_site = site_url
         return copy.deepcopy(self.query_rows)
 
-    def get_page_stats(self, site_url):
+    async def get_page_stats(self, site_url):
         self.page_site = site_url
         return copy.deepcopy(self.page_rows)
 
-    def get_keyword_stats(self, keyword, country_code, language_tag):
+    async def get_keyword_stats(self, keyword, country_code, language_tag):
         self.keyword_args = {
             "keyword": keyword,
             "country_code": country_code,
@@ -127,15 +132,22 @@ class FakeApi:
         }
         return copy.deepcopy(self.keyword_rows)
 
-    def get_blocked_urls(self, site_url):
+    async def get_blocked_urls(self, site_url):
         self.blocked_site = site_url
         return copy.deepcopy(self.blocked_rows)
 
-    def add_blocked_url(self, site_url, url, entity_type, request_type):
+    async def get_crawl_stats(self, site_url):
+        self.crawl_site = site_url
+        return copy.deepcopy(self.crawl_rows)
+
+    async def add_blocked_url(self, site_url, url, entity_type, request_type):
         self.added.append((site_url, url, entity_type, request_type))
 
-    def remove_blocked_url(self, site_url, url, entity_type, request_type):
+    async def remove_blocked_url(self, site_url, url, entity_type, request_type):
         self.removed.append((site_url, url, entity_type, request_type))
+
+    async def aclose(self):
+        pass
 
 
 @pytest.fixture

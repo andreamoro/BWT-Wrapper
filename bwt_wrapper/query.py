@@ -20,11 +20,16 @@ Key differences from GSC:
 from __future__ import annotations
 import datetime
 import copy
+from typing import Generic, Self, TypeVar, cast
 from .account import WebProperty
 from .report import Report
+from .schemas import QueryRow, PageRow
 
 
 _MIN_DATE = datetime.date(2000, 1, 1)
+
+# The row type produced by a concrete stats builder (QueryRow / PageRow).
+RowT = TypeVar("RowT")
 
 
 def _today() -> datetime.date:
@@ -32,7 +37,7 @@ def _today() -> datetime.date:
     return datetime.datetime.now(datetime.UTC).date()
 
 
-class _BaseStats:
+class _BaseStats(Generic[RowT]):
     """Shared logic between QueryStats and PageStats."""
 
     def __init__(self, web_property: WebProperty) -> None:
@@ -54,7 +59,7 @@ class _BaseStats:
         self,
         start: str | datetime.date,
         end:   str | datetime.date,
-    ) -> '_BaseStats':
+    ) -> Self:
         """
         Restrict results to rows whose Date falls within [start, end].
 
@@ -72,7 +77,7 @@ class _BaseStats:
         _validate_date_range(clone._start_date, clone._end_date)
         return clone
 
-    def filter_query(self, value: str, contains: bool = True) -> '_BaseStats':
+    def filter_query(self, value: str, contains: bool = True) -> Self:
         """
         Filter rows by the Query field (which holds the search term in
         QueryStats, or the page URL in PageStats).
@@ -94,31 +99,33 @@ class _BaseStats:
     # Execution
     # ------------------------------------------------------------------
 
-    def execute(self) -> Report:
+    async def execute(self) -> Report[RowT]:
         """
         Fetch data from the API and return a Report without any additional
         processing.  Equivalent to get() but returns only what the API
         sends back.  Positions are still normalised (divided by 10).
         """
-        raw = self._fetch()
-        return Report(self._apply_filters(raw))
+        raw = await self._fetch()
+        # Rows are built dynamically as plain dicts; cast to the concrete row
+        # type (QueryRow / PageRow) bound by the subclass for the caller.
+        return Report(cast("list[RowT]", self._apply_filters(raw)))
 
-    def get(self) -> Report:
+    async def get(self) -> Report[RowT]:
         """
         Fetch data, apply all configured filters, and return a Report.
         This is the primary method for retrieving data.
         """
-        return self.execute()
+        return await self.execute()
 
-    def to_dataframe(self):
-        """Shorthand for get().to_dataframe()."""
-        return self.get().to_dataframe()
+    async def to_dataframe(self):
+        """Shorthand for (await get()).to_dataframe()."""
+        return (await self.get()).to_dataframe()
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _fetch(self) -> list[dict]:
+    async def _fetch(self) -> list[dict]:
         raise NotImplementedError
 
     def _apply_filters(self, rows: list[dict]) -> list[dict]:
@@ -184,7 +191,7 @@ class _BaseStats:
         return row
 
 
-class QueryStats(_BaseStats):
+class QueryStats(_BaseStats[QueryRow]):
     """
     Fluent builder for Bing query-level search performance data.
 
@@ -198,16 +205,16 @@ class QueryStats(_BaseStats):
     Usage
     -----
     query = QueryStats(site)
-    report = query.date_range('2025-11-01', '2025-11-30').get()
+    report = await query.date_range('2025-11-01', '2025-11-30').get()
     df = report.to_dataframe()
     """
 
-    def _fetch(self) -> list[dict]:
-        rows = self._property._api.get_query_stats(self._property.url)
+    async def _fetch(self) -> list[dict]:
+        rows = await self._property._api.get_query_stats(self._property.url)
         return [self._add_ctr(self._normalise_positions(row)) for row in rows]
 
 
-class PageStats(_BaseStats):
+class PageStats(_BaseStats[PageRow]):
     """
     Fluent builder for Bing page-level search performance data.
 
@@ -219,12 +226,12 @@ class PageStats(_BaseStats):
     Usage
     -----
     pages = PageStats(site)
-    report = pages.filter_query('/blog/').date_range('2025-01-01', '2025-12-31').get()
+    report = await pages.filter_query('/blog/').date_range('2025-01-01', '2025-12-31').get()
     df = report.to_dataframe()
     """
 
-    def _fetch(self) -> list[dict]:
-        rows = self._property._api.get_page_stats(self._property.url)
+    async def _fetch(self) -> list[dict]:
+        rows = await self._property._api.get_page_stats(self._property.url)
         return [self._add_ctr(self._normalise_positions(row)) for row in rows]
 
 

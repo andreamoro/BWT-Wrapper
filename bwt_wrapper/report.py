@@ -8,21 +8,30 @@ in-memory byte streams.
 
 import pickle
 import io
-from typing import Any
+from typing import Any, Generic, TypeVar
+
+# The row type a given Report holds (e.g. QueryRow, KeywordRow). Generic so a
+# single Report class carries through whatever row shape it was filled with;
+# see bwt_wrapper.schemas for the concrete TypedDicts.
+RowT = TypeVar("RowT")
 
 
-class Report:
+class Report(Generic[RowT]):
     """
     Wraps a list of normalised result rows from the Bing API and provides
     convenient export methods.
 
+    ``Report`` is generic over its row type: ``Report[QueryRow]``,
+    ``Report[KeywordRow]``, etc.  This is purely a static-typing aid — at
+    runtime every row is a plain ``dict`` exactly as before.
+
     Attributes
     ----------
-    rows : list[dict]
-        The raw result data, one dict per row.
+    rows : list[RowT]
+        The result data, one dict per row.
     """
 
-    def __init__(self, rows: list[dict]) -> None:
+    def __init__(self, rows: list[RowT]) -> None:
         self._rows = rows
 
     # ------------------------------------------------------------------
@@ -39,7 +48,7 @@ class Report:
         return f'<Report rows={len(self._rows)}>'
 
     @property
-    def rows(self) -> list[dict]:
+    def rows(self) -> list[RowT]:
         """Return the underlying list of result rows."""
         return self._rows
 
@@ -96,9 +105,12 @@ class Report:
         return buffer.getvalue()
 
     @classmethod
-    def from_disk(cls, filename: str) -> 'Report':
+    def from_disk(cls, filename: str) -> 'Report[dict[str, Any]]':
         """
         Load a previously saved report from a pickle file.
+
+        The on-disk format does not record the original row type, so the
+        result is typed as ``Report[dict[str, Any]]``.
 
         Parameters
         ----------
@@ -106,13 +118,13 @@ class Report:
         """
         with open(filename, 'rb') as fh:
             rows = pickle.load(fh)
-        return cls(rows)
+        return Report(rows)
 
     @classmethod
-    def from_datastream(cls, data: bytes) -> 'Report':
+    def from_datastream(cls, data: bytes) -> 'Report[dict[str, Any]]':
         """
         Reconstruct a Report from a byte stream created by to_datastream().
         """
         buffer = io.BytesIO(data)
         rows = pickle.load(buffer)
-        return cls(rows)
+        return Report(rows)

@@ -12,26 +12,26 @@ Usage
 blocked = bwt_wrapper.BlockedUrls(site)
 
 # List all currently blocked URLs
-report = blocked.get()
+report = await blocked.get()
 df = report.to_dataframe()
 
 # Block a page (remove cache only)
 from bwt_wrapper.enumerations import entity_type, request_type
-blocked.add(
+await blocked.add(
     url='https://example.com/old-page',
     entity_type=entity_type.PAGE,
     request_type=request_type.REMOVE_CACHE,
 )
 
 # Block an entire directory and disallow indexing
-blocked.add(
+await blocked.add(
     url='https://example.com/private/',
     entity_type=entity_type.DIRECTORY,
     request_type=request_type.DISALLOW,
 )
 
 # Remove a previously added rule
-blocked.remove(
+await blocked.remove(
     url='https://example.com/old-page',
     entity_type=entity_type.PAGE,
     request_type=request_type.REMOVE_CACHE,
@@ -39,8 +39,10 @@ blocked.remove(
 """
 
 from __future__ import annotations
+from typing import cast
 from .account import WebProperty
 from .report import Report
+from .schemas import BlockedRow
 from .enumerations import entity_type as EntityType, request_type as RequestType
 
 
@@ -65,24 +67,24 @@ class BlockedUrls:
     # Read
     # ------------------------------------------------------------------
 
-    def get(self) -> Report:
+    async def get(self) -> Report[BlockedRow]:
         """
         Return all currently active blocked URL rules for the site.
 
         Each row contains: Url, EntityType, RequestType, Date.
         """
-        rows = self._property._api.get_blocked_urls(self._property.url)
-        return Report(rows)
+        rows = await self._property._api.get_blocked_urls(self._property.url)
+        return Report(cast("list[BlockedRow]", rows))
 
-    def to_dataframe(self):
-        """Shorthand for get().to_dataframe()."""
-        return self.get().to_dataframe()
+    async def to_dataframe(self):
+        """Shorthand for (await get()).to_dataframe()."""
+        return (await self.get()).to_dataframe()
 
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
 
-    def add(
+    async def add(
         self,
         url: str,
         entity_type: EntityType | int = EntityType.PAGE,
@@ -100,14 +102,14 @@ class BlockedUrls:
                        showing the URL in search results at all
         """
         self._validate_url(url)
-        self._property._api.add_blocked_url(
+        await self._property._api.add_blocked_url(
             site_url=self._property.url,
             url=url,
             entity_type=int(entity_type),
             request_type=int(request_type),
         )
 
-    def remove(
+    async def remove(
         self,
         url: str,
         entity_type: EntityType | int = EntityType.PAGE,
@@ -120,7 +122,7 @@ class BlockedUrls:
         rule that was originally submitted.
         """
         self._validate_url(url)
-        self._property._api.remove_blocked_url(
+        await self._property._api.remove_blocked_url(
             site_url=self._property.url,
             url=url,
             entity_type=int(entity_type),

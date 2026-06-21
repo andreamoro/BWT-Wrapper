@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.3.0] – 2026-06-21
+
+### Changed
+- **BREAKING: the wrapper is now fully async.** Every network call is a
+  coroutine and must be awaited (`await query.get()`,
+  `await account.webproperties()`, `await blocked.add(...)`, etc.). The
+  transport moved from `requests` to [`httpx`](https://www.python-httpx.org/)
+  (`httpx.AsyncClient`). Synchronous callers must migrate to `asyncio`
+- `Account` and `BingApi` are now async context managers that own an HTTP
+  connection pool; use `async with Account() as account:` (or call
+  `await account.aclose()`) so the client is closed cleanly
+- `Account` indexing, `len()`, and iteration (`account[0]`, `for site in
+  account`) are now synchronous *views over the cache* — call
+  `await account.webproperties()` once first to populate it, otherwise a
+  `RuntimeError` is raised explaining the required order
+
+### Added
+- Client-side rate limiting via
+  [`aiolimiter`](https://github.com/mjpieters/aiolimiter) (default 5
+  requests/second, configurable through `Account(max_rate=…,
+  time_period=…, timeout=…)`), so requests can be fanned out with
+  `asyncio.gather` without tripping Bing's server-side limits
+- `CrawlStats` builder over `GetCrawlStats`, exposing **daily** crawl/index
+  rows (`CrawledPages`, `CrawlErrors`, `InIndex`, `InLinks`, the HTTP
+  status-code breakdown, etc.) with the same client-side `date_range()`
+  filtering used by `QueryStats` / `PageStats`
+- `schemas.py` — `TypedDict` row schemas (`QueryRow`, `PageRow`, `KeywordRow`,
+  `BlockedRow`, `CrawlRow`) describing each endpoint's post-normalisation
+  shape. `Report` is now generic (`Report[QueryRow]`, …); this is a
+  static-typing aid only — at runtime every row is still a plain `dict`
+- GitHub Actions CI workflow (`.github/workflows/tests.yml`) running the
+  offline `pytest` suite on Python 3.13 via `uv`
+- `pytest-asyncio` test dependency (with `asyncio_mode = "auto"`) and a
+  `test_crawl.py` suite covering endpoint wiring and date filtering
+
 ## [0.2.0] – 2026-06-19
 
 ### Added

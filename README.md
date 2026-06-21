@@ -11,6 +11,7 @@ It is written in Python and provides a convenient fluent interface to query:
 - **Search Performance by query** (`QueryStats`) — mirrors the Top Queries view
 - **Search Performance by page** (`PageStats`) — mirrors the Top Pages view
 - **Keyword Research** (`KeywordStats`) — historical broad/strict impression volume
+- **Crawl & Index stats** (`CrawlStats`) — daily crawled pages, crawl errors, pages in index, HTTP status breakdown
 - **Blocked URLs** (`BlockedUrls`) — list, add, and remove blocked URL rules
 
 The design deliberately mirrors the [GSC Wrapper](https://github.com/andreamoro/GSC-Wrapper) to maintain compatibility with the patterns and facilitate application re-usage.
@@ -22,8 +23,15 @@ The design deliberately mirrors the [GSC Wrapper](https://github.com/andreamoro/
 `bwt_wrapper` requires Python 3.13 or greater (it relies on the standard
 library `tomllib` module for credential parsing).
 
-The only required runtime dependency is `requests`.  `pandas` is optional
-and is only needed if you call `.to_dataframe()`.
+`bwt_wrapper` is an **async** library: every network call is a coroutine and
+must be awaited from inside an `asyncio` event loop. It is built on
+[`httpx`](https://www.python-httpx.org/) for transport and
+[`aiolimiter`](https://github.com/mjpieters/aiolimiter) for client-side rate
+limiting, so you can safely fan many requests out with `asyncio.gather`
+without tripping Bing's server-side limits.
+
+The required runtime dependencies are `httpx` and `aiolimiter`.  `pandas` is
+optional and is only needed if you call `.to_dataframe()`.
 
 ### With pip
 
@@ -99,34 +107,73 @@ account = bwt_wrapper.Account(api_key='your_api_key')
 ## Quickstart
 
 ```python
+import asyncio
 import bwt_wrapper
 
-account   = bwt_wrapper.Account()              # reads from credentials.toml
-site_list = account.webproperties()
-site      = account[0]               # or account['https://example.com']
+async def main():
+    # Use the Account as an async context manager so the underlying HTTP
+    # client (and its connection pool) is closed cleanly on exit.
+    async with bwt_wrapper.Account() as account:   # reads from credentials.toml
+        site_list = await account.webproperties()  # also populates the cache
+        site      = account[0]            # or account['https://example.com']
 
-# Query-level performance (Top Queries)
-query   = bwt_wrapper.QueryStats(site)
-report  = query.date_range('2024-01-01', '2024-06-30').get()
-df      = report.to_dataframe()
+        # Query-level performance (Top Queries)
+        query   = bwt_wrapper.QueryStats(site)
+        report  = await query.date_range('2024-01-01', '2024-06-30').get()
+        df      = report.to_dataframe()
 
-# Page-level performance (Top Pages)
-pages   = bwt_wrapper.PageStats(site)
-report  = pages.filter_query('/blog/').get()
+        # Page-level performance (Top Pages)
+        pages   = bwt_wrapper.PageStats(site)
+        report  = await pages.filter_query('/blog/').get()
 
-# Keyword research
-kw      = bwt_wrapper.KeywordStats(site)
-report  = (
-    kw
-    .keyword('seo tools')
-    .country(bwt_wrapper.country.UNITED_STATES)
-    .language(bwt_wrapper.language.ENGLISH)
-    .get()
-)
+        # Keyword research
+        kw      = bwt_wrapper.KeywordStats(site)
+        report  = await (
+            kw
+            .keyword('seo tools')
+            .country(bwt_wrapper.country.UNITED_STATES)
+            .language(bwt_wrapper.language.ENGLISH)
+            .get()
+        )
 
-# Blocked URLs
-blocked = bwt_wrapper.BlockedUrls(site)
-report  = blocked.get()
+        # Crawl & index stats (daily)
+        crawl   = bwt_wrapper.CrawlStats(site)
+        report  = await crawl.date_range('2026-01-01', '2026-01-31').get()
+
+        # Blocked URLs
+        blocked = bwt_wrapper.BlockedUrls(site)
+        report  = await blocked.get()
+
+asyncio.run(main())
+```
+
+> **Note on indexing.** Because the dunder methods (`account[0]`,
+> `len(account)`, iteration) are synchronous, you must `await
+> account.webproperties()` once first to load and cache the site list.
+> Indexing before that raises a `RuntimeError` with a reminder.
+
+### Concurrency
+
+A single `Account` / `BingApi` is safe to share across concurrent tasks, and
+requests are automatically throttled by `aiolimiter`:
+
+```python
+async with bwt_wrapper.Account() as account:
+    await account.webproperties()
+    # Fetch query stats for every verified site at once.
+    reports = await asyncio.gather(
+        *(bwt_wrapper.QueryStats(site).get() for site in account)
+    )
+```
+
+The rate limit defaults to 5 requests/second and is configurable when you
+construct an `Account` with an explicit key:
+
+```python
+account = bwt_wrapper.Account(api_key='...')
+# or tune the transport directly:
+from bwt_wrapper.api import BingApi
+api = BingApi('...', max_rate=10, time_period=1.0, timeout=30)
 ```
 
 ---
@@ -142,9 +189,11 @@ account = bwt_wrapper.Account(api_key='...')   # explicit key
 
 | Method / attribute         | Description                                       |
 | -------------------------- | ------------------------------------------------- |
-| `webproperties()`        | Returns `list[WebProperty]`; results are cached |
-| `account[0]`             | Access a site by integer index                    |
-| `account['https://...']` | Access a site by URL                              |
+| `await webproperties()`  | Coroutine. Returns `list[WebProperty]`; results are cached |
+| `account[0]`             | Access a site by integer index (after `webproperties()`)  |
+| `account['https://...']` | Access a site by URL (after `webproperties()`)            |
+| `async with account:`    | Async context manager; closes the HTTP client on exit     |
+| `await account.aclose()` | Close the underlying HTTP client explicitly               |
 
 ---
 
@@ -165,9 +214,9 @@ ratio, rounded to 4 decimals) — the Bing API itself does not return it.
 | ---------------------------------- | ------------------------------------------ |
 | `.date_range(start, end)`        | Filter rows to a date window (client-side) |
 | `.filter_query(value, contains)` | Filter rows by the Query field             |
-| `.get()`                         | Fetch and return a `Report`              |
-| `.execute()`                     | Same as `get()`                          |
-| `.to_dataframe()`                | Shorthand for `get().to_dataframe()`     |
+| `await .get()`                   | Coroutine. Fetch and return a `Report`   |
+| `await .execute()`               | Coroutine. Same as `get()`               |
+| `await .to_dataframe()`          | Coroutine. Shorthand for `(await get()).to_dataframe()` |
 
 > **Note:** Bing's API does not accept date range parameters for
 > `GetQueryStats` or `GetPageStats` — the full dataset is always
@@ -200,8 +249,32 @@ Maps to `GetKeywordStats`.  Returns weekly rows with:
 | `.keyword(term)`  | **Required.** The search term to research                   |
 | `.country(code)`  | **Required.** `bwt_wrapper.country.*` enum or raw string  |
 | `.language(tag)`  | **Required.** `bwt_wrapper.language.*` enum or raw string |
-| `.get()`          | Fetch and return a `Report`                                     |
-| `.to_dataframe()` | Shorthand for `get().to_dataframe()`                            |
+| `await .get()`          | Coroutine. Fetch and return a `Report`                   |
+| `await .to_dataframe()` | Coroutine. Shorthand for `(await get()).to_dataframe()`  |
+
+---
+
+### CrawlStats
+
+```python
+crawl = bwt_wrapper.CrawlStats(site)
+```
+
+Maps to `GetCrawlStats`.  Returns **daily** rows (one per calendar date —
+crawl stats are *not* weekly like the search-performance endpoints) with:
+`Date`, `CrawledPages`, `CrawlErrors`, `InIndex`, `InLinks`,
+`BlockedByRobotsTxt`, `ContainsMalware`, `Code2xx`, `Code301`, `Code302`,
+`Code4xx`, `Code5xx`, `AllOtherCodes`, `ConnectionTimeout`, `DnsFailures`.
+
+| Method                    | Description                                |
+| ------------------------- | ------------------------------------------ |
+| `.date_range(start, end)` | Filter rows to a date window (client-side) |
+| `await .get()`            | Coroutine. Fetch and return a `Report`   |
+| `await .execute()`        | Coroutine. Same as `get()`               |
+| `await .to_dataframe()`   | Coroutine. Shorthand for `(await get()).to_dataframe()` |
+
+> **Note:** Bing returns the full crawl history in one call, so `date_range()`
+> is applied client-side — same as `QueryStats` / `PageStats`.
 
 ---
 
@@ -213,10 +286,10 @@ blocked = bwt_wrapper.BlockedUrls(site)
 
 | Method                                      | Description                               |
 | ------------------------------------------- | ----------------------------------------- |
-| `.get()`                                  | Returns a `Report` of all blocked rules |
-| `.add(url, entity_type, request_type)`    | Add a blocked URL rule                    |
-| `.remove(url, entity_type, request_type)` | Remove an existing rule                   |
-| `.to_dataframe()`                         | Shorthand for `get().to_dataframe()`    |
+| `await .get()`                                  | Coroutine. Returns a `Report` of all blocked rules |
+| `await .add(url, entity_type, request_type)`    | Coroutine. Add a blocked URL rule                  |
+| `await .remove(url, entity_type, request_type)` | Coroutine. Remove an existing rule                 |
+| `await .to_dataframe()`                         | Coroutine. Shorthand for `(await get()).to_dataframe()` |
 
 **entity_type** values (from `bwt_wrapper.enumerations`):
 
@@ -260,10 +333,11 @@ them:
 | Module             | Responsibility                                                                                                   |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `credentials.py` | Loads the API key from `credentials.toml` via `tomllib`, keeping secrets out of source.                      |
-| `api.py`         | Single low-level HTTP transport (`BingApi`). Centralises URL building, JSON parsing, error handling.           |
+| `api.py`         | Single low-level async HTTP transport (`BingApi`) over `httpx.AsyncClient`, rate-limited with `aiolimiter`. Centralises URL building, JSON parsing, error handling. |
 | `account.py`     | `Account` / `WebProperty` — site discovery and lookup by index or URL, mirroring the GSC Wrapper surface.    |
 | `query.py`       | `QueryStats` / `PageStats` fluent builders over the search-performance endpoints.                              |
 | `keywords.py`    | `KeywordStats` fluent builder over `GetKeywordStats` (keyword research).                                      |
+| `crawl.py`       | `CrawlStats` fluent builder over `GetCrawlStats` (daily crawl/index stats).                                   |
 | `blocked.py`     | `BlockedUrls` — list/add/remove blocked URL rules.                                                            |
 | `report.py`      | `Report` — wraps result rows and exports to DataFrame, pickle file, or byte stream.                          |
 | `enumerations.py`| Typed `country` / `language` / `entity_type` / `request_type` constants accepted by the API.                 |
@@ -285,17 +359,21 @@ Key design decisions worth remembering:
   account-driven flow across all builders (the URL simply isn't sent for that call).
 - **Optional pandas.** `pandas` is not a hard dependency; `to_dataframe()` raises
   a clear `ImportError` with install instructions when it is missing.
+- **Async transport with rate limiting.** All I/O is async (`httpx.AsyncClient`),
+  and every request passes through an `aiolimiter.AsyncLimiter` so concurrent
+  fan-out (`asyncio.gather`) stays within Bing's server-side rate limits. A
+  single `Account` / `BingApi` is safe to share across concurrent tasks.
 
 ---
 
 ## Testing
 
 The automated suite under [`tests/`](tests/) is **fully offline and
-deterministic** — the HTTP layer is replaced with test doubles, so no API key
-or network connection is required. Run it after every change:
+deterministic** — the async HTTP layer is replaced with test doubles, so no
+API key or network connection is required. Run it after every change:
 
 ```bash
-python -m pip install ".[test]"   # installs pytest (and pandas)
+python -m pip install ".[test]"   # installs pytest, pytest-asyncio (and pandas)
 pytest
 ```
 
@@ -315,6 +393,7 @@ What is covered:
 | `test_account.py`           | Site discovery, caching, int/URL indexing, lookup tolerance             |
 | `test_query_page_stats.py`  | Immutable fluent builders, client-side filtering, position normalisation, date validation |
 | `test_keywords.py`          | Required-field validation and enum/raw-string coercion                  |
+| `test_crawl.py`             | Endpoint/URL wiring, client-side date filtering, date validation        |
 | `test_blocked.py`           | URL validation and enum→int coercion for add/remove                     |
 | `test_report.py`            | DataFrame / pickle / byte-stream round-trips                            |
 | `test_enumerations.py`      | Enum values and a regression guard against duplicate definitions        |

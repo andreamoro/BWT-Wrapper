@@ -52,43 +52,73 @@ class Account:
     credentials_file : str or path, optional
         Path to a TOML file containing the API key (default:
         ``credentials.toml`` in the current working directory).
+    max_rate, time_period, timeout : optional
+        Transport tuning forwarded to :class:`~bwt_wrapper.api.BingApi`:
+        at most *max_rate* requests per *time_period* seconds (rate limit),
+        and a per-request *timeout* in seconds.
 
     When *api_key* is omitted the key is loaded automatically from
     the credentials file.
 
+    Because the underlying HTTP client owns a connection pool, use the
+    account as an async context manager (``async with Account() as account``)
+    or call :meth:`aclose` when finished.
+
     Usage
     -----
     # Option 1 – credentials file (recommended)
-    account = Account()
+    async with Account() as account:
+        sites = await account.webproperties()
+        site  = account[0]                       # or account['https://example.com']
 
     # Option 2 – explicit key
     account = Account(api_key='your_api_key')
-
-    sites = account.webproperties()
-    site  = account[0]
-    site  = account['https://example.com']
     """
 
     def __init__(
         self,
         api_key: str | None = None,
         credentials_file: str | os.PathLike | None = None,
+        *,
+        max_rate: float = 5,
+        time_period: float = 1.0,
+        timeout: float = 30,
     ) -> None:
         if api_key is None:
             api_key = load_api_key(credentials_file)
-        self._api        = BingApi(api_key)
+        self._api        = BingApi(
+            api_key,
+            max_rate=max_rate,
+            time_period=time_period,
+            timeout=timeout,
+        )
         self._properties: list[WebProperty] | None = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client and its connection pool."""
+        await self._api.aclose()
+
+    async def __aenter__(self) -> 'Account':
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        await self.aclose()
 
     # ------------------------------------------------------------------
     # Site discovery
     # ------------------------------------------------------------------
 
-    def webproperties(self) -> list[WebProperty]:
+    async def webproperties(self) -> list[WebProperty]:
         """
         Return all sites registered in the account.
 
         Results are cached for the lifetime of this Account object to
-        avoid repeated API calls when accessing sites by index or URL.
+        avoid repeated API calls.  After the first call the cached list also
+        backs synchronous indexing (``account[0]``), ``len()`` and iteration.
         """
         if self._properties is None:
             self._properties = [
@@ -97,8 +127,22 @@ class Account:
                     is_verified=row.get('IsVerified', False),
                     api=self._api,
                 )
-                for row in self._api.get_sites()
+                for row in await self._api.get_sites()
             ]
+        return self._properties
+
+    def _loaded(self) -> list[WebProperty]:
+        """
+        Return the cached properties, or raise if they have not been
+        fetched yet.  Indexing/len/iteration are synchronous and therefore
+        cannot perform the network call themselves.
+        """
+        if self._properties is None:
+            raise RuntimeError(
+                'Sites have not been loaded yet. '
+                'Call "await account.webproperties()" before indexing, '
+                'len(), or iterating over an Account.'
+            )
         return self._properties
 
     # ------------------------------------------------------------------
@@ -109,12 +153,14 @@ class Account:
         """
         Access a WebProperty by index (int) or by site URL (str).
 
+        Requires ``await account.webproperties()`` to have been called first.
+
         Examples
         --------
         site = account[0]
         site = account['https://example.com']
         """
-        properties = self.webproperties()
+        properties = self._loaded()
 
         if isinstance(key, int):
             return properties[key]
@@ -136,11 +182,12 @@ class Account:
         )
 
     def __len__(self) -> int:
-        return len(self.webproperties())
+        return len(self._loaded())
 
     def __iter__(self):
-        return iter(self.webproperties())
+        return iter(self._loaded())
 
     def __repr__(self) -> str:
-        count = len(self.webproperties())
-        return f'<Account sites={count}>'
+        if self._properties is None:
+            return '<Account sites=unloaded>'
+        return f'<Account sites={len(self._properties)}>'

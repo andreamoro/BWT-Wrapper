@@ -12,11 +12,14 @@ Authentication is via a plain API key appended to every request.
 No OAuth flow is needed.
 """
 
+from __future__ import annotations
+
 import re
 import datetime
 from urllib.parse import urlencode, quote_plus
 
-import requests
+import httpx
+from aiolimiter import AsyncLimiter
 
 
 _BASE_URL = 'https://ssl.bing.com/webmaster/api.svc/json'
@@ -59,23 +62,70 @@ class BingApiError(Exception):
 
 class BingApi:
     """
-    Thin wrapper around the Bing Webmaster Tools JSON API.
+    Thin async wrapper around the Bing Webmaster Tools JSON API.
+
+    Networking is handled by an ``httpx.AsyncClient`` that lives for the
+    lifetime of the instance.  Because the client owns a connection pool it
+    must be closed when you are done with it.  The cleanest way is to use the
+    object as an async context manager::
+
+        async with BingApi(api_key) as api:
+            sites = await api.get_sites()
+
+    Otherwise call :meth:`aclose` explicitly when finished.
+
+    Concurrency is safe: a single instance can be shared across many
+    concurrent ``await`` calls (e.g. via ``asyncio.gather``).  An
+    :class:`aiolimiter.AsyncLimiter` throttles outbound requests so that
+    fanning out does not trip Bing's server-side rate limits — every GET and
+    POST passes through the limiter before hitting the network.
 
     Parameters
     ----------
     api_key : str
         The API key generated in Bing Webmaster Tools → Settings → API Access.
+    max_rate : float
+        Maximum number of requests allowed per ``time_period`` (default 5).
+    time_period : float
+        The rate-limit window in seconds (default 1.0).
+    timeout : float
+        Per-request timeout in seconds (default 30).
     """
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        max_rate: float = 5,
+        time_period: float = 1.0,
+        timeout: float = 30,
+    ) -> None:
         if not api_key:
             raise ValueError('An API key is required.')
         self._api_key = api_key
-        self._session = requests.Session()
-        self._session.headers.update({
-            'Accept': 'application/json',
-            'Content-Type': 'application/json; charset=utf-8',
-        })
+        self._timeout = timeout
+        self._limiter = AsyncLimiter(max_rate, time_period)
+        self._client = httpx.AsyncClient(
+            headers={
+                'Accept': 'application/json',
+                'Content-Type': 'application/json; charset=utf-8',
+            },
+            timeout=timeout,
+        )
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client and its connection pool."""
+        await self._client.aclose()
+
+    async def __aenter__(self) -> 'BingApi':
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        await self.aclose()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -88,24 +138,26 @@ class BingApi:
             params.update(extra_params)
         return f'{_BASE_URL}/{method}?{urlencode(params, quote_via=quote_plus)}'
 
-    def _get(self, method: str, params: dict | None = None) -> list[dict]:
+    async def _get(self, method: str, params: dict | None = None) -> list[dict]:
         """
         Perform a GET request and return the normalised list from the 'd' node.
         """
         url = self._url(method, params)
-        response = self._session.get(url, timeout=30)
+        async with self._limiter:
+            response = await self._client.get(url, timeout=self._timeout)
         self._raise_for_error(response)
         data = response.json()
         rows = data.get('d', []) or []
         return [_normalise_row(row) for row in rows]
 
-    def _post(self, method: str, payload: dict) -> dict:
+    async def _post(self, method: str, payload: dict) -> dict:
         """
         Perform a POST request with a JSON body.
         Returns the parsed response body.
         """
         url = self._url(method)
-        response = self._session.post(url, json=payload, timeout=30)
+        async with self._limiter:
+            response = await self._client.post(url, json=payload, timeout=self._timeout)
         self._raise_for_error(response)
         # Some POST endpoints return nothing useful in the body
         try:
@@ -114,7 +166,7 @@ class BingApi:
             return {}
 
     @staticmethod
-    def _raise_for_error(response: requests.Response) -> None:
+    def _raise_for_error(response: 'httpx.Response') -> None:
         if response.status_code == 200:
             return
         try:
@@ -130,33 +182,48 @@ class BingApi:
     # Site management
     # ------------------------------------------------------------------
 
-    def get_sites(self) -> list[dict]:
+    async def get_sites(self) -> list[dict]:
         """Return all sites registered in the account."""
-        return self._get('GetUserSites')
+        return await self._get('GetUserSites')
 
     # ------------------------------------------------------------------
     # Search performance
     # ------------------------------------------------------------------
 
-    def get_query_stats(self, site_url: str) -> list[dict]:
+    async def get_query_stats(self, site_url: str) -> list[dict]:
         """
         Return weekly query-level performance stats for the given site.
         Maps to the Search Performance → Top Queries view in the UI.
         """
-        return self._get('GetQueryStats', {'siteUrl': site_url})
+        return await self._get('GetQueryStats', {'siteUrl': site_url})
 
-    def get_page_stats(self, site_url: str) -> list[dict]:
+    async def get_page_stats(self, site_url: str) -> list[dict]:
         """
         Return weekly page-level performance stats for the given site.
         Maps to the Search Performance → Top Pages view in the UI.
         """
-        return self._get('GetPageStats', {'siteUrl': site_url})
+        return await self._get('GetPageStats', {'siteUrl': site_url})
+
+    # ------------------------------------------------------------------
+    # Crawl & indexing
+    # ------------------------------------------------------------------
+
+    async def get_crawl_stats(self, site_url: str) -> list[dict]:
+        """
+        Return daily crawl and index statistics for the given site.
+
+        Each row represents one calendar day (crawl stats are daily, unlike
+        the weekly search-performance endpoints) and includes crawled pages,
+        crawl errors, pages in index, inbound links, and an HTTP status-code
+        breakdown.  Maps to the Crawl Information view in the UI.
+        """
+        return await self._get('GetCrawlStats', {'siteUrl': site_url})
 
     # ------------------------------------------------------------------
     # Keyword research
     # ------------------------------------------------------------------
 
-    def get_keyword_stats(
+    async def get_keyword_stats(
         self,
         keyword: str,
         country_code: str,
@@ -172,7 +239,7 @@ class BingApi:
         country_code : lowercase ISO 3166-1 alpha-2 code, e.g. 'us'
         language_tag : IETF BCP 47 tag, e.g. 'en-US'
         """
-        return self._get('GetKeywordStats', {
+        return await self._get('GetKeywordStats', {
             'q':        keyword,
             'country':  country_code,
             'language': language_tag,
@@ -182,11 +249,11 @@ class BingApi:
     # Blocked URLs
     # ------------------------------------------------------------------
 
-    def get_blocked_urls(self, site_url: str) -> list[dict]:
+    async def get_blocked_urls(self, site_url: str) -> list[dict]:
         """Return all blocked URL rules for the given site."""
-        return self._get('GetBlockedUrls', {'siteUrl': site_url})
+        return await self._get('GetBlockedUrls', {'siteUrl': site_url})
 
-    def add_blocked_url(
+    async def add_blocked_url(
         self,
         site_url: str,
         url: str,
@@ -203,7 +270,7 @@ class BingApi:
         entity_type  : 0 = page, 1 = directory
         request_type : 0 = remove cache, 1 = disallow
         """
-        self._post('AddBlockedUrl', {
+        await self._post('AddBlockedUrl', {
             'siteUrl': site_url,
             'blockedUrl': {
                 '__type':      'BlockedUrl:#Microsoft.Bing.Webmaster.Api',
@@ -214,7 +281,7 @@ class BingApi:
             },
         })
 
-    def remove_blocked_url(
+    async def remove_blocked_url(
         self,
         site_url: str,
         url: str,
@@ -226,7 +293,7 @@ class BingApi:
 
         Parameters mirror add_blocked_url().
         """
-        self._post('RemoveBlockedUrl', {
+        await self._post('RemoveBlockedUrl', {
             'siteUrl': site_url,
             'blockedUrl': {
                 '__type':      'BlockedUrl:#Microsoft.Bing.Webmaster.Api',

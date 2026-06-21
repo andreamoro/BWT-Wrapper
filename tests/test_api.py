@@ -74,53 +74,53 @@ def test_url_encodes_extra_params(api):
 # GET / POST plumbing
 # ----------------------------------------------------------------------
 
-def test_get_returns_normalised_rows_from_d_node(api):
-    api._session.get_response = FakeResponse(json_data={
+async def test_get_returns_normalised_rows_from_d_node(api):
+    api._client.get_response = FakeResponse(json_data={
         "d": [{"__type": "X", "Date": "/Date(1609459200000)/", "Query": "q"}]
     })
-    rows = api._get("GetQueryStats")
+    rows = await api._get("GetQueryStats")
     assert rows == [{"Date": datetime.date(2021, 1, 1), "Query": "q"}]
 
 
 @pytest.mark.parametrize("body", [{"d": None}, {}, {"d": []}])
-def test_get_handles_missing_or_null_d(api, body):
-    api._session.get_response = FakeResponse(json_data=body)
-    assert api._get("GetUserSites") == []
+async def test_get_handles_missing_or_null_d(api, body):
+    api._client.get_response = FakeResponse(json_data=body)
+    assert await api._get("GetUserSites") == []
 
 
-def test_get_passes_timeout_and_url(api):
-    api._get("GetUserSites")
-    call = api._session.get_calls[-1]
+async def test_get_passes_timeout_and_url(api):
+    await api._get("GetUserSites")
+    call = api._client.get_calls[-1]
     assert call["timeout"] == 30
     assert "GetUserSites" in call["url"]
 
 
-def test_post_returns_parsed_body(api):
-    api._session.post_response = FakeResponse(json_data={"d": True})
-    assert api._post("AddBlockedUrl", {"x": 1}) == {"d": True}
+async def test_post_returns_parsed_body(api):
+    api._client.post_response = FakeResponse(json_data={"d": True})
+    assert await api._post("AddBlockedUrl", {"x": 1}) == {"d": True}
 
 
-def test_post_returns_empty_dict_when_no_json_body(api):
-    api._session.post_response = FakeResponse(raise_json=True)
-    assert api._post("AddBlockedUrl", {"x": 1}) == {}
+async def test_post_returns_empty_dict_when_no_json_body(api):
+    api._client.post_response = FakeResponse(raise_json=True)
+    assert await api._post("AddBlockedUrl", {"x": 1}) == {}
 
 
 # ----------------------------------------------------------------------
 # Error handling
 # ----------------------------------------------------------------------
 
-def test_non_200_raises_with_message(api):
-    api._session.get_response = FakeResponse(status_code=401, json_data={"Message": "Bad key"})
+async def test_non_200_raises_with_message(api):
+    api._client.get_response = FakeResponse(status_code=401, json_data={"Message": "Bad key"})
     with pytest.raises(BingApiError) as exc:
-        api._get("GetUserSites")
+        await api._get("GetUserSites")
     assert "401" in str(exc.value)
     assert "Bad key" in str(exc.value)
 
 
-def test_non_200_falls_back_to_text(api):
-    api._session.get_response = FakeResponse(status_code=500, raise_json=True, text="Server boom")
+async def test_non_200_falls_back_to_text(api):
+    api._client.get_response = FakeResponse(status_code=500, raise_json=True, text="Server boom")
     with pytest.raises(BingApiError) as exc:
-        api._get("GetUserSites")
+        await api._get("GetUserSites")
     assert "Server boom" in str(exc.value)
 
 
@@ -128,29 +128,29 @@ def test_non_200_falls_back_to_text(api):
 # Typed endpoint methods send the right method + params
 # ----------------------------------------------------------------------
 
-def test_get_query_stats_sends_site_url(api):
-    api.get_query_stats("https://example.com")
-    url = api._session.get_calls[-1]["url"]
+async def test_get_query_stats_sends_site_url(api):
+    await api.get_query_stats("https://example.com")
+    url = api._client.get_calls[-1]["url"]
     assert "GetQueryStats" in url and "siteUrl=https%3A%2F%2Fexample.com" in url
 
 
-def test_get_page_stats_sends_site_url(api):
-    api.get_page_stats("https://example.com")
-    assert "GetPageStats" in api._session.get_calls[-1]["url"]
+async def test_get_page_stats_sends_site_url(api):
+    await api.get_page_stats("https://example.com")
+    assert "GetPageStats" in api._client.get_calls[-1]["url"]
 
 
-def test_get_keyword_stats_sends_q_country_language(api):
-    api.get_keyword_stats("seo tools", "us", "en")
-    url = api._session.get_calls[-1]["url"]
+async def test_get_keyword_stats_sends_q_country_language(api):
+    await api.get_keyword_stats("seo tools", "us", "en")
+    url = api._client.get_calls[-1]["url"]
     assert "GetKeywordStats" in url
     assert "q=seo+tools" in url
     assert "country=us" in url
     assert "language=en" in url
 
 
-def test_add_blocked_url_posts_expected_payload(api):
-    api.add_blocked_url("https://example.com", "https://example.com/p", 0, 1)
-    call = api._session.post_calls[-1]
+async def test_add_blocked_url_posts_expected_payload(api):
+    await api.add_blocked_url("https://example.com", "https://example.com/p", 0, 1)
+    call = api._client.post_calls[-1]
     assert "AddBlockedUrl" in call["url"]
     payload = call["json"]
     assert payload["siteUrl"] == "https://example.com"
@@ -161,9 +161,9 @@ def test_add_blocked_url_posts_expected_payload(api):
     assert blocked["__type"].startswith("BlockedUrl:#")
 
 
-def test_remove_blocked_url_posts_expected_payload(api):
-    api.remove_blocked_url("https://example.com", "https://example.com/p", 1, 0)
-    call = api._session.post_calls[-1]
+async def test_remove_blocked_url_posts_expected_payload(api):
+    await api.remove_blocked_url("https://example.com", "https://example.com/p", 1, 0)
+    call = api._client.post_calls[-1]
     assert "RemoveBlockedUrl" in call["url"]
     assert call["json"]["blockedUrl"]["EntityType"] == 1
     assert call["json"]["blockedUrl"]["RequestType"] == 0
