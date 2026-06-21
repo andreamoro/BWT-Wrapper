@@ -1,5 +1,8 @@
 # Credentials – never commit real API keys
 credentials.toml
+.claude
+.venv
+.vscode
 
 # Python
 __pycache__/
